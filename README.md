@@ -1,6 +1,6 @@
 # Mortgages and Rentals
 
-## Data Sources:
+## Data Sources (last two not used in the actual report):
 https://wowa.ca/banks/prime-rates-canada
 
 https://www03.cmhc-schl.gc.ca/hmip-pimh/en/TableMapChart/Table?TableId=1.10.1&GeographyId=2410&GeographyTypeId=3&DisplayAs=Table&GeograghyName=Vancouver#Single%20/%20Semi-detached
