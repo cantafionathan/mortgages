@@ -1,5 +1,5 @@
 ---
-title: "Mortgages and Rentals"
+title: "Mortgages"
 author: "Nathan Cantafio"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output: 
@@ -24,6 +24,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(reshape2)
 library(tidyverse)
+source("functions.R")
 ```
 
 # Motivations
@@ -41,11 +42,13 @@ payment <- function(principal=500000, rate=0.05, downpayment=0.05, time = 25) {
 300*payment(principal = 700000) # total cost of mortgage is over 1.1 million!!!
 ```
 
-# Math Background
+This question essentially boils down to finding a way to estimate the total cost of a mortgage. For fixed rate mortgages this comes down to some linear algebra. For variable rate mortgages, we need a way to predict (or at least generate plausible) interest rates. This is a challenging problem. In this project I will develop a few different methods for doing this, and go over their pros and cons. In the end we will compare the total cost of a mortgage to a rental and see if we can say anything meaningful.
 
-Any math that I did or found for this project and thought was worth mentioning is in this section.
+# Background
 
-## Monthly Payment Formula
+In this section we will develop some of the theory that we later apply to the problem of predicting (or generating) interest rates. This involves topics ranging from numerical methods to statistical inference/probability theory.
+
+## Monthly payment formula for a fixed rate mortgage
 
 To find a formula for what the monthly payment must be in order to pay off a fixed rate mortgage in a specified number of years I used linear algebra to solve the recurrence. This is unique compared to the other approaches I've seen online which used sums.
 
@@ -76,7 +79,7 @@ The above on its own is called the drift term. There is also some volatility or 
 
 \[dr= \alpha(\theta-r)dt+\sigma dW.\]
 
-Above is the Vasicek model, we add a $dt$ into the equation for reasons that I do not understand.
+Above is the Vasicek model, we add a $dt$ into the equation to represent the time-step.
 
 The CIR model is similar but volatility is also proportional to the square root of the rate:
 
@@ -95,7 +98,13 @@ We can then rearrange this as:
 where $a=1-\alpha dt$, $b=\alpha\theta dt$ and $\varepsilon = \sigma dW$ so that we can run a linear regression.
 
 
-# Simulating Interest Rates
+# Predicting (or generating) interest rates
+
+## Approach 1 - Generating plausible interest rates
+
+Rather than trying to make predictions about future interest rates from previous rates, what if we had access to the distribution of interest rate trajectories? Then we could check how often in this distribution is, for example, the total cost of mortgage more than double the principal?
+
+In some sense we are trying to estimate the distribution of a vector in $\mathbb{R}^T$ where $T$ is the number of observations, and each component is likely highly correlated with each other. And all from a single observation! When I write it down like this it seems fruitless. When I first started this project I didn't have as clear an understanding of what I was doing. In any case here are the results of this first approach.
 
 I chose to use a CIR model to avoid negative interest rates. However, due to errors introduced by the discretization, I added a step of taking the absolute value. The function for simulating a CIR model is below.
 
@@ -105,6 +114,7 @@ cir <- function(alpha, theta, sigma, steps) {
   
   r <- vector(length=steps)
   r[1] <- theta # initial interest rate
+  # r[1] <- 5 # could choose any initial rate we want
   
   
   for (i in 2:steps) {
@@ -153,46 +163,10 @@ theta = b/(1 - a) # Speed of mean reversion
 sigma <- sqrt(MSE)/sqrt(dt) # Volatility
 ```
 
-There are two ways to calculate the Log-Likelihood for the CIR model both of which are implemented below. The first involves the Bessel function, and the second involves Chi-Squared distribution.
+There are two ways to calculate the Log-Likelihood for the CIR model both of which are implemented in the file `definitions.R`. The first involves the Bessel function, and the second involves Chi-Squared distribution.
 
 ```{r, echo=TRUE, include=TRUE}
 # Now refine the value of parameters with ML estimation
-# function to calculate the ln Likelihood for CIR Model
-lnLhelper <- function(param, data, dt) {
-  n = length(data)
-  dataF <- data[-1] # data from 2:n
-  dataL <- data[-n] # data from 1:n-1
-  
-  # parameter values
-  alpha <- param[1]
-  theta <- param[2]
-  sigma <- param[3]
-  
-  # ## calculate likelihood (Bessel)
-  c = 2*alpha/(sigma^2*(1 - exp(-alpha*dt)))
-  q = 2*alpha*theta/sigma^2 - 1
-  u = c*exp(-alpha*dt)*dataL
-  v = c*dataF
-  z = 2*sqrt(u*v)
-  bf = besselI(z, q, T) # scaled modified bessel function of the first kind
-
-  lnL = -(n-1)*log(c) + sum(u + v - 0.5*q*log(v/u) - log(bf) - z)
-  
-  # calculate likelihood (Chi-Sq)
-  # c = 2*alpha/(sigma^2*(1 - exp(-alpha*dt)))
-  # q = 2*alpha*theta/sigma^2 - 1
-  # u = c*exp(-alpha*dt)*dataL
-  # v = c*dataF
-  # s = 2*c*dataF
-  # nc = 2*u # non-centrality
-  # df = 2*q + 2 # degrees of freedom
-  # 
-  # gpdf = dchisq(s, df = df, ncp = nc)
-  # ppdf = 2*c*gpdf
-  # lnL = sum(-log(ppdf))
-   
-  return(lnL)
-}
 
 # returns the ln Likelihood function for the CIR Model
 # enter the data and time step inside the function definition
@@ -205,8 +179,10 @@ logLikelihood <- function(param) {
 # for example call optim(c(alpha, theta, sigma), logLikelihood)
 # results for Canada overnight rate from January 1960 - March 2024 have been saved in cirParameters.csv
 
-parameter_data <- read.csv(file="cirParameters.csv", row.names = 1)
+MLE <- optim(c(alpha, theta, sigma), logLikelihood)$par
 ```
+
+Now that we have chosen parameters, we can generate samples.
 
 ```{r, echo=TRUE, include=TRUE, out.width="75%"}
 # Simulate the rates
@@ -214,7 +190,7 @@ parameter_data <- read.csv(file="cirParameters.csv", row.names = 1)
 steps <- 300
 
 # choose which parameters to use
-param <- parameter_data$mleBessel
+param <- MLE
 
 # Create time vector
 time <- 1:steps
@@ -229,19 +205,25 @@ N <- 5
 for (i in 1:N) {
   trajectories <- cbind(trajectories, cir(param[1], param[2], param[3], steps))
 }
-colnames(trajectories) <- c('time', paste("traj", 1:N, sep = "")) # rename columns
+colnames(trajectories) <- c('time', paste("trajectory", 1:N, sep = "")) # rename columns
 
 # for plotting purposes in ggplot
-trajectories <- melt(trajectories, id.vars = 'time', variable.name = 'traj')
+trajectories <- melt(trajectories, id.vars = 'time', variable.name = 'trajectory')
 
 ggplot(data = trajectories, aes(time, value)) +
-  geom_line(aes(colour = traj)) +
+  geom_line(aes(colour = trajectory)) +
   geom_hline(yintercept = param[2], linetype = "dashed") +
   xlab("Time") +
   ylab("Interest Rate") +
   ggtitle("CIR Interest Rate Monte Carlo Simulation") +
   theme_bw()
 ```
+
+What follows are different methods for predicting interest rates from previous observations.
+
+## Approach 2 - Predicting interest rates with a linear model
+
+## Approach 3 - Predicting interest rates with ______
 
 # Mortgaging vs Renting
 
@@ -254,32 +236,6 @@ Lets go through a quick example. Let's say a house is bought in 1990 for \$500,0
 In the end we will have a range of rents for each of the 25 years. And this is only for 1 interest rate trajectory! But with this information we can compare the cost of mortgaging to the cost of rent for this particular interest rate trajectory. If we do this for several simulated trajectories, we can see how often and by how much is mortgaging or renting better than the other financially.
 
 ```{r, include=TRUE, echo=TRUE}
-# a few useful functions
-
-# returns the monthly payment required to pay off the mortgage in the specified time (given in years)
-# interest is annualized and downpayment is as a percentage, assumes monthly interest and payments
-payment <- function(principal=500000, rate=0.05, downpayment=0.05, time = 25) {
-  return((rate/12)*((1+rate/12)^(12*time))*(principal-downpayment*principal)/((1+rate/12)^(12*time)-1))
-}
-
-# returns a vector with the monthly payments required to pay off the mortgage in the specified time
-# rates is a vector of annualized interest rates for each month in a sequence 
-# downpayment is given as a percentage
-variable_payment <- function(principal=500000, downpayment=0.05, time=25, rates) {
-  n = 12*time # time in months
-  payments = vector(length=n)
-  amount_owed = principal - downpayment*principal # initial amount owed
-  for (i in 1:n) {
-    # calculate payment for month i so that mortgage is payed off in n-i+1 many months
-    payment = (rates[i]/12)*((1+rates[i]/12)^(n-i+1))*(amount_owed)/((1+rates[i]/12)^(n-i+1)-1)
-    # records payment on month i
-    payments[i] = payment
-    # updates new amount owed on month i
-    amount_owed = amount_owed - payment + amount_owed*rates[i]/12
-  }
-  return(payments)
-}
-
 # principal = initial value of property
 # time = number of years for mortgage
 # rates = interest rate over time
@@ -349,7 +305,7 @@ Compare rentals to mortgages.
 steps <- 300
 
 # choose which parameters to use
-param <- parameter_data$mleBessel
+param <- MLE
 
 # Create time vector
 time <- 1:steps
@@ -358,7 +314,7 @@ time <- 1:steps
 trajectories <- as.data.frame(c(time))
 
 # Choose how many simulated trajectories to generate 
-N <- 100000
+N <- 1000
 
 # Run loop to generate N different simulated trajectories
 
