@@ -1,3 +1,5 @@
+mortgages.Rproj
+.DS_Store
 .Rproj.user
 .Rhistory
 .RData
@@ -10,3 +12,5 @@ propertyvalues.csv
 rentingsim.R
 rentprices.txt
 vasicek.R
+mortgages_cache/
+mortgages_files/

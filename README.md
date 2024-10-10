@@ -1,6 +1,6 @@
 # Mortgages and Rentals
 
-## Data Source (last two not used in the actual report):
+## Data Source:
 https://wowa.ca/banks/prime-rates-canada
 
 ## Additional Sources
