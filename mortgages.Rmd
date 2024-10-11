@@ -15,8 +15,6 @@ output:
 
 \newpage
 \tableofcontents
-\listoffigures
-\listoftables
 \newpage
 
 ```{r setup, include=FALSE}
@@ -100,6 +98,24 @@ where $a=1-\alpha dt$, $b=\alpha\theta dt$ and $\varepsilon = \sigma dW$ so that
 
 # Predicting (or generating) interest rates
 
+Here is a plot of Canada's overnight rate from 1960 to March 2024
+
+```{r, echo=TRUE, include=TRUE}
+# load data
+rates <- read.csv(file = "canadarates.csv")
+colnames(rates) <- c("date", "prime", "overnight")
+rates <- tail(rates, -26)
+dates <- as.Date(rates$date, format = "%d %B %Y")
+
+r = rates$overnight/100
+n = length(r)
+
+ggplot(data = data.frame(year = dates, rate = r)) +
+  geom_line(aes(x = year, y = rate))
+```
+
+This is the data we will use to generate our predictions.
+
 ## Approach 1 - Generating plausible interest rates
 
 Rather than trying to make predictions about future interest rates from previous rates, what if we had access to the distribution of interest rate trajectories? Then we could check how often in this distribution is, for example, the total cost of a mortgage more than double the principal?
@@ -131,14 +147,6 @@ cir <- function(alpha, theta, sigma, steps) {
 To choose parameters that yield realistic interest rates, I used data of Canada's overnight rate from 1960 to March of 2024. I then ran a linear regression, predicting the last $n-1$ rates from the first $n-1$ rates. Using the formula from before to get the parameters from the coefficients. These parameters act as an initial guess for the MLE estimation which follows. I could have just stopped at the regression, but I wanted to use MLE to refine and hopefully improve the choice of parameters.
 
 ```{r, echo=TRUE, include=TRUE}
-# load data
-rates <- read.csv(file = "canadarates.csv")
-colnames(rates) <- c("date", "prime", "overnight")
-rates <- tail(rates, -26)
-
-r = rates$overnight/100
-n = length(r)
-
 # predicting last n-1 rates based on the first n-1 to fit CIR Model
 
 x <- r[-n]
@@ -197,7 +205,7 @@ time <- 1:steps
 trajectories <- as.data.frame(c(time))
 
 # Choose how many simulated trajectories to generate 
-N <- 5
+N <- 1
 
 # Run loop to generate N different simulated trajectories
 for (i in 1:N) {
@@ -225,7 +233,9 @@ What follows are different methods for predicting interest rates from past rates
 
 ## Approach 2 - Predicting interest rates with a linear model
 
-## Approach 3 - Predicting interest rates with ______
+## Approach 3 - Predicting interest rates with a SARIMA model
+
+## Approach 4 - Revisiting approach 1 (resampling over shorter periods)
 
 # Results of the various approaches
 
