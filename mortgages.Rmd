@@ -102,16 +102,19 @@ Here is a plot of Canada's overnight rate from 1960 to March 2024
 
 ```{r, echo=TRUE, include=TRUE}
 # load data
-rates <- read.csv(file = "canadarates.csv")
-colnames(rates) <- c("date", "prime", "overnight")
-rates <- tail(rates, -26)
-dates <- as.Date(rates$date, format = "%d %B %Y")
+canadarates <- read.csv(file = "canadarates.csv")
+colnames(canadarates) <- c("date", "prime", "overnight")
+canadarates <- tail(canadarates, -26)
+dates <- as.Date(canadarates$date, format = "%d %B %Y")
+canadarates$date <- dates
 
-r = rates$overnight/100
+r = canadarates$overnight/100
 n = length(r)
 
-ggplot(data = data.frame(year = dates, rate = r)) +
-  geom_line(aes(x = year, y = rate))
+rates <- data.frame(date = dates, rate = r)
+
+ggplot(data = rates) +
+  geom_line(aes(x = date, y = rate))
 ```
 
 This is the data we will use to generate our predictions.
@@ -232,6 +235,67 @@ Another approach is to try and make predictions. Instead of thinking about the d
 What follows are different methods for predicting interest rates from past rates.
 
 ## Approach 2 - Predicting interest rates with a linear model
+
+Now we will fit a linear model using OLS. We will try predicting the overnight rate 6 months from now, using the overnight rates now, 6 months ago, and 12 months ago.
+
+```{r}
+# put data into desired format
+rate = canadarates$overnight
+date = canadarates$date
+rates = tibble(date = date[13:765],
+               `rate-12` = rate[1:753],
+               `rate-6` = rate[7:759],
+               `rate+0` = rate[13:765],
+               `rate+6` = rate[19:771])
+
+# fit naive linear model
+model <- lm(`rate+6` ~ `rate+0` + `rate-6` + `rate-12`, data = rates)
+
+residuals <- data.frame(fit = model$fitted.values, residuals = model$residuals)
+resplot <- ggplot(data = residuals) +
+  geom_point(aes(x = fit, y = residuals))
+qqplot<- ggplot(residuals, aes(sample = residuals)) + 
+  stat_qq() + 
+  stat_qq_line()
+cowplot::plot_grid(resplot, qqplot)
+```
+
+From these plots, the assumptions of a linear model do not seem to be met, and using a linear model does not seem justified.
+
+If we transform our data, maybe we can do a better job.
+
+```{r}
+lambda = 1
+tr <- function(d) {
+  log(lambda + d)
+}
+
+# shift1 <- "2008-06-01"
+# shift2 <- "2021-12-01"
+# 
+# rates_2008 <- rates[(which(rates$date == shift1) + 1):which(rates$date == shift2), ]
+# 
+# rates_2020 <- rates[(which(rates$date == shift2) + 1):753, ] %>%
+#   mutate(across(`rate-12`:`rate+6`, tr))
+# 
+# rates_tr <- rates[1:which(rates$date == shift1), ] %>% 
+#   mutate(across(`rate-12`:`rate+6`, tr)) %>%
+#   rbind(rates_2008) %>%
+#   rbind(rates_2020)
+
+rates_tr <- rates %>%
+  mutate(across(`rate-12`:`rate+6`, tr))
+
+model <- lm(`rate+6` ~ `rate+0` + `rate-6` + `rate-12`, data = rates_tr)
+residuals <- data.frame(fit = model$fitted.values, residuals = model$residuals)
+resplot <- ggplot(data = residuals) +
+  geom_point(aes(x = fit, y = residuals))
+qqplot<- ggplot(residuals, aes(sample = residuals)) +
+  stat_qq() +
+  stat_qq_line()
+cowplot::plot_grid(resplot, qqplot)
+```
+It seems like this made our data a bit more suited towards a linear model. I don't mind transforming the data in this way because I am not trying to use this model for any interpretations - just making predictions. But how do we choose $\lambda$?
 
 ## Approach 3 - Predicting interest rates with a SARIMA model
 
