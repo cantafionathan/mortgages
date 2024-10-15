@@ -24,6 +24,10 @@ OLS_t <- function(t, rate = canadarates$overnight, date = canadarates$date) { #
   }
   colnames(rates) <- c('date', 'rate+t', 'rate+0', paste("rate-", seq(t, 6, by=-6), sep=""))
   
+  n <- length(rates$date)
+  rates_test <- rates[(n-t+1):n,]
+  rates <- rates[(1:(n-t)),]
+  
   # use cross validation to select lambda
   lambda = seq(0, 20, by = 0.5)
   cv <- transform_cv(data = rates, lambda, kfolds = 10, t = t)
@@ -33,22 +37,26 @@ OLS_t <- function(t, rate = canadarates$overnight, date = canadarates$date) { #
   tr <- function(d) {
     log(lambda + d)
   }
+    # train data
   rates_tr <- rates %>%
+    mutate(across(`rate+t`:`rate-6`, tr))
+    # test data
+  rates_test_tr <- rates_test %>%
     mutate(across(`rate+t`:`rate-6`, tr))
   
   # fit model
   model <- lm(`rate+t` ~. -date, data = rates_tr)
   
   # plot fitted model + future predictions + actual values
-  someRates = tail(rates_tr, t)
-  someDates = seq.Date(from = someRates$date[1], by ="month", length.out = 2*t)
+  pred = data.frame(date = rates_test$date, 
+                    predictions = exp(predict(model, rates_test_tr)) - lambda)
+  fit = data.frame(date = rates_tr$date, fits = (exp(model$fitted.values)-lambda))
   
-  pred = data.frame(date = someDates, predictions = exp(predict(model, someRates)) - lambda,
-                    row.names = NULL)
   ggplot() +
     geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
+    geom_point(data = rates_test, mapping = aes(x = date, y = `rate+0`), colour = "gray") +
     geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple") +
-    geom_line(data = data.frame(date = rates_tr$date, pred = (exp(model$fitted.values)-lambda)), mapping = aes(x = date, y = pred), colour = "blue") +
+    geom_line(data = fit, mapping = aes(x = date, y = fits), colour = "blue") +
     labs(title = paste("Predicting", t/12, "years into the future")) +
     theme_bw()
 } #

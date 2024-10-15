@@ -241,6 +241,8 @@ What follows are different methods for predicting interest rates from past rates
 
 ## Approach 2 - Predicting interest rates with a linear model
 
+<!-- I should just split the data into a "train" and "test" set -->
+
 Now we will fit a linear model using OLS. We will try predicting the overnight rate $t$ months from now, using the rate now, and the rates every 6 months ago until we hit $t$ months ago. For example, we might predict the rate 18 months from now using the rates now, 6 months ago, 12 months ago, and 18 months ago.
 
 ```{r}
@@ -260,6 +262,11 @@ for (i in 1:(t/6)) {
   rates <- cbind.data.frame(rates, rate[(1 + 6*(i-1)):(n - 2*t+6*(i-1))])
 }
 colnames(rates) <- c('date', 'rate+t', 'rate+0', paste("rate-", seq(t, 6, by=-6), sep=""))
+n <- length(rates$date)
+
+rates_test <- rates[(n-t+1):n,]
+rates <- rates[(1:(n-t)),]
+
 
 # regress `rate+t` on `rate+0`, `rate-6`, ..., `rate -(t-6), and `rate-t`
 model <- lm(`rate+t` ~. - date, data = rates)
@@ -276,15 +283,13 @@ qqplot<- ggplot(residuals, aes(sample = residuals)) +
 cowplot::plot_grid(resplot, qqplot)
 
 #fitted values
-someRates = tail(rates, 2*t)
-someDates = seq.Date(from = someRates$date[1], by ="month", length.out = 4*t)
-
-pred = data.frame(date = someDates, predictions = predict(model, someRates), row.names = NULL)
+pred = data.frame(date = rates_test$date, predictions = predict(model, rates_test))
+fit = data.frame(date = rates$date, fits = model$fitted.values)
 ggplot() +
   geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
+  geom_point(data = rates_test, mapping = aes(x = date, y = `rate+0`), colour = "gray") +
   geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple") +
-  geom_line(data = data.frame(date = rates$date, pred = model$fitted.values), 
-            mapping = aes(x = date, y = pred), colour = "blue") +
+  geom_line(data = fit, mapping = aes(x = date, y = fits), colour = "blue") +
   theme_bw()
 ```
 
@@ -330,21 +335,23 @@ rates_tr <- rates %>%
   mutate(across(`rate+t`:`rate-6`, tr))
 model <- lm(`rate+t` ~. -date, data = rates_tr)
 
-# plot fitted model + future predictions + actual values
-someRates = tail(rates_tr, t)
-someDates = seq.Date(from = someRates$date[1], by ="month", length.out = 2*t)
+rates_test_tr <- rates_test %>%
+    mutate(across(`rate+t`:`rate-6`, tr))
 
-pred = data.frame(date = someDates, predictions = exp(predict(model, someRates)) - lambda,
-                  row.names = NULL)
+# plot fitted model + future predictions + actual values
+pred = data.frame(date = rates_test$date, 
+                  predictions = exp(predict(model, rates_test_tr)) - lambda)
+fit = data.frame(date = rates_tr$date, fits = (exp(model$fitted.values)-lambda))
 ggplot() +
   geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
+  geom_point(data = rates_test, mapping = aes(x = date, y = `rate+0`), colour = "gray") +
   geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple") +
-  geom_line(data = data.frame(date = rates_tr$date, 
-                              pred = (exp(model$fitted.values)-lambda)), 
-            mapping = aes(x = date, y = pred), colour = "blue") +
+  geom_line(data = fit, mapping = aes(x = date, y = fits), colour = "blue") +
   labs(title = paste("Predicting", t/12, "years into the future")) +
   theme_bw()
 ```
+
+The black dots are the data that the model was trained on, the gray dots are the data that model did not get to see in training. The blue lines are the fitted values, and the purple line is future predictions.
 
 We can see that the model does a pretty nice job of fitting the data! I would say slightly better than the untransformed version. And we even get some predictions for future interest rates in purple. Unfortunately, the further out we predict the worse our fit is.
 
@@ -355,7 +362,7 @@ cowplot::plot_grid(p1, p2, p3, p4)
 
 This is unsurprising since to predict further, we need to essentially shrink our data size.
 
-Overall I'm not a huge fan of this approach. It makes sense that subsequent interest rates would be correlated, so because of the way we set up the model, we shouldn't really make the assumption of independent predictors (which we implicitly have to by using OLS). 
+Overall I'm not a huge fan of this approach. It makes sense that subsequent interest rates would be correlated, so because of the way we set up the model, we shouldn't really make the assumption of independent predictors (which we implicitly have to by using OLS). And the predictions just aren't very useful if we go far out.
 
 A better method is one that is tailored to time series data.
 
