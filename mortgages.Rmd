@@ -25,6 +25,7 @@ library(tidyverse)
 source("functions.R")
 source("mortgagescripts.R")
 source("transformcv.R")
+source("OLS.R")
 ```
 
 # Motivations
@@ -110,13 +111,10 @@ canadarates <- tail(canadarates, -26)
 dates <- as.Date(canadarates$date, format = "%d %B %Y")
 canadarates$date <- dates
 
-r = canadarates$overnight/100
-n = length(r)
-
-rates <- data.frame(date = dates, rate = r)
-
-ggplot(data = rates) +
-  geom_line(aes(x = date, y = rate))
+ggplot(data = canadarates) +
+  geom_line(aes(x = date, y = overnight)) +
+  labs(title = "Canada's Overnight Rate", y = "Rate", x = "Date") +
+  theme_bw()
 ```
 
 This is the data we will use to generate our predictions.
@@ -152,6 +150,11 @@ cir <- function(alpha, theta, sigma, steps) {
 To choose parameters that yield realistic interest rates, I used data of Canada's overnight rate from 1960 to March of 2024. I then ran a linear regression, predicting the last $n-1$ rates from the first $n-1$ rates. Using the formula from before to get the parameters from the coefficients. These parameters act as an initial guess for the MLE estimation which follows. I could have just stopped at the regression, but I wanted to use MLE to refine and hopefully improve the choice of parameters.
 
 ```{r, echo=TRUE, include=TRUE}
+r = canadarates$overnight/100
+n = length(r)
+
+rates <- data.frame(date = dates, rate = r)
+
 # predicting last n-1 rates based on the first n-1 to fit CIR Model
 
 x <- r[-n]
@@ -210,7 +213,7 @@ time <- 1:steps
 trajectories <- as.data.frame(c(time))
 
 # Choose how many simulated trajectories to generate 
-N <- 1
+N <- 5
 
 # Run loop to generate N different simulated trajectories
 for (i in 1:N) {
@@ -238,72 +241,133 @@ What follows are different methods for predicting interest rates from past rates
 
 ## Approach 2 - Predicting interest rates with a linear model
 
-Now we will fit a linear model using OLS. We will try predicting the overnight rate 6 months from now, using the overnight rates now, 6 months ago, and 12 months ago.
+Now we will fit a linear model using OLS. We will try predicting the overnight rate $t$ months from now, using the rate now, and the rates every 6 months ago until we hit $t$ months ago. For example, we might predict the rate 18 months from now using the rates now, 6 months ago, 12 months ago, and 18 months ago.
 
 ```{r}
-# put data into desired format
 rate = canadarates$overnight
 date = canadarates$date
-rates = tibble(date = date[13:765],
-               `rate-12` = rate[1:753], # 771 - 18 = 753
-               `rate-6` = rate[7:759],
-               `rate+0` = rate[13:765],
-               `rate+6` = rate[19:771])
 
-# fit naive linear model
-model <- lm(`rate+6` ~ `rate+0` + `rate-6` + `rate-12`, data = rates)
+# want to predict t months into future (t should be divisible by 6)
+# coerce data into desired format
+t <- 6
+n = length(rate)
+date = date[(t+1):(n-t)]
+`rate+0` = rate[(t+1):(n-t)]
+`rate+t` = rate[(2*t+1):n]
+rates <- cbind.data.frame(date, `rate+t`, `rate+0`)
+# rate-t, ... rate-(t-6), ... rate-6
+for (i in 1:(t/6)) {
+  rates <- cbind.data.frame(rates, rate[(1 + 6*(i-1)):(n - 2*t+6*(i-1))])
+}
+colnames(rates) <- c('date', 'rate+t', 'rate+0', paste("rate-", seq(t, 6, by=-6), sep=""))
 
+# regress `rate+t` on `rate+0`, `rate-6`, ..., `rate -(t-6), and `rate-t`
+model <- lm(`rate+t` ~. - date, data = rates)
+
+# residual and qq plots
 residuals <- data.frame(fit = model$fitted.values, residuals = model$residuals)
 resplot <- ggplot(data = residuals) +
-  geom_point(aes(x = fit, y = residuals))
+  geom_point(aes(x = fit, y = residuals)) +
+  theme_bw()
 qqplot<- ggplot(residuals, aes(sample = residuals)) + 
   stat_qq() + 
-  stat_qq_line()
+  stat_qq_line() +
+  theme_bw()
 cowplot::plot_grid(resplot, qqplot)
+
+#fitted values
+someRates = tail(rates, 2*t)
+someDates = seq.Date(from = someRates$date[1], by ="month", length.out = 4*t)
+
+pred = data.frame(date = someDates, predictions = predict(model, someRates), row.names = NULL)
+ggplot() +
+  geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
+  geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple") +
+  geom_line(data = data.frame(date = rates$date, pred = model$fitted.values), 
+            mapping = aes(x = date, y = pred), colour = "blue") +
+  theme_bw()
 ```
 
-From these plots, the assumptions of a linear model do not seem to be met, and using a linear model does not seem justified.
+From the residuals and qq plots, the assumptions of a linear model do not seem to be met, and using a linear model does not seem justified. However, in all honesty the predictions aren't horrible.
 
-If we transform our data, maybe we can do a better job.
+But maybe if we transform our data, we can do an even better job.
 
 ```{r}
-lambda = 5
+lambda = 20
 tr <- function(d) {
   log(lambda + d)
 }
 
 rates_tr <- rates %>%
-  mutate(across(`rate-12`:`rate+6`, tr))
+  mutate(across(`rate+t`:`rate-6`, tr))
 
-model <- lm(`rate+6` ~ `rate+0` + `rate-6` + `rate-12`, data = rates_tr)
+model <- lm(`rate+t` ~. -date, data = rates_tr)
 residuals <- data.frame(fit = model$fitted.values, residuals = model$residuals)
 resplot <- ggplot(data = residuals) +
-  geom_point(aes(x = fit, y = residuals))
+  geom_point(aes(x = fit, y = residuals)) +
+  theme_bw()
 qqplot<- ggplot(residuals, aes(sample = residuals)) +
   stat_qq() +
-  stat_qq_line()
+  stat_qq_line() +
+  theme_bw()
 cowplot::plot_grid(resplot, qqplot)
 ```
-It seems like this made our data a bit more suited towards a linear model. I don't mind transforming the data in this way because I am not trying to use this model for any interpretations - just making predictions. We will choose a suitable value of lambda with cross validation.
+From the residual and qqplots, it seems like this made our data a little bit more suited towards a linear model. I don't mind transforming the data in this way because I am not trying to use this model for any interpretations - just making predictions. We will choose a suitable value of lambda with cross validation.
 
 ```{r}
 # find the value of lambda which results in the lowest cv score
-# running this a few times it seems lambda of about 5 is good
 lambda = seq(0, 20, by = 0.5)
-cv <- transform_cv(rates, lambda, kfolds = 10)
+cv <- transform_cv(rates, lambda, kfolds = 10, t = t)
 lambda.min = lambda[which(cv == min(cv))]
 ```
 
 ```{r}
-pred = data.frame(date = rates$date, predictions = exp(model$fitted.values) - lambda)
+lambda = lambda.min
+tr <- function(d) {
+  log(lambda + d)
+}
+rates_tr <- rates %>%
+  mutate(across(`rate+t`:`rate-6`, tr))
+model <- lm(`rate+t` ~. -date, data = rates_tr)
+
+# plot fitted model + future predictions + actual values
+someRates = tail(rates_tr, t)
+someDates = seq.Date(from = someRates$date[1], by ="month", length.out = 2*t)
+
+pred = data.frame(date = someDates, predictions = exp(predict(model, someRates)) - lambda,
+                  row.names = NULL)
 ggplot() +
   geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
-  geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple")
+  geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple") +
+  geom_line(data = data.frame(date = rates_tr$date, 
+                              pred = (exp(model$fitted.values)-lambda)), 
+            mapping = aes(x = date, y = pred), colour = "blue") +
+  labs(title = paste("Predicting", t/12, "years into the future")) +
+  theme_bw()
 ```
 
-We can see that the model does a pretty nice job! The issue is that we cannot predict all that far into the future, (in fact only 6 months).
+We can see that the model does a pretty nice job of fitting the data! I would say slightly better than the untransformed version. And we even get some predictions for future interest rates in purple. Unfortunately, the further out we predict the worse our fit is.
 
-## Approach 3 - Predicting interest rates with a SARIMA model
+```{r}
+p1 <- OLS_t(6); p2 <- OLS_t(60); p3 <- OLS_t(90); p4 <- OLS_t(120)
+cowplot::plot_grid(p1, p2, p3, p4)
+```
+
+This is unsurprising since to predict further, we need to essentially shrink our data size.
+
+Overall I'm not a huge fan of this approach. It makes sense that subsequent interest rates would be correlated, so because of the way we set up the model, we shouldn't really make the assumption of independent predictors (which we implicitly have to by using OLS). 
+
+A better method is one that is tailored to time series data.
+
+## Approach 3 - Predicting interest rates with Box-Jenkins
+
+This leads us to the Box-Jenkins Method.
+
+```{r}
+
+```
+
+A disadvantage of this method is that there isn't really a programatic way of predicting future rates given some history. We need to redo the entire analysis.
 
 ## Approach 4 - Revisiting approach 1 (resampling over shorter periods)
 

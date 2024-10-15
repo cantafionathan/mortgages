@@ -20,25 +20,25 @@ kfold_cv <- function(data, estimator, predictor, error_fun, kfolds = 5, lambda) 
 
 # cross validation for choosing lambda for transformation
 # (horribly designed)
-transform_cv <- function(data, lambda = 1:50, kfolds = 5) {
+transform_cv <- function(data, lambda = 1:50, kfolds = 5, t = t) {
   tr <- function(d, lambda) {
     log(lambda + d)
   }
   
   estimator <- function(data, lambda) {
     data_tr <- data %>%
-      mutate(across(`rate-12`:`rate+6`, ~ tr(., lambda)))
-    lm(`rate+6` ~ `rate+0` + `rate-6` + `rate-12`, data = data_tr)
+      mutate(across(`rate+t`:`rate-6`, ~ tr(., lambda)))
+    lm(`rate+t` ~. -date, data = data_tr)
   }
   
   error_fun <- function(testData){
-    mean(abs(testData$`rate+6` - testData$.preds))
+    mean(abs(testData$`rate+t` - testData$.preds))
   }
   
   n <- length(lambda)
   CV <- vector(length=n)
   for (i in 1:n) {
-    CV[i] = kfold_cv(rates, estimator, predict, error_fun, kfolds = kfolds, lambda = lambda[i])
+    CV[i] = kfold_cv(data, estimator, predict, error_fun, kfolds = kfolds, lambda = lambda[i])
   }
   
   CV
