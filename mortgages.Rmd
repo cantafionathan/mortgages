@@ -23,6 +23,8 @@ library(ggplot2)
 library(reshape2)
 library(tidyverse)
 source("functions.R")
+source("mortgagescripts.R")
+source("transformcv.R")
 ```
 
 # Motivations
@@ -243,7 +245,7 @@ Now we will fit a linear model using OLS. We will try predicting the overnight r
 rate = canadarates$overnight
 date = canadarates$date
 rates = tibble(date = date[13:765],
-               `rate-12` = rate[1:753],
+               `rate-12` = rate[1:753], # 771 - 18 = 753
                `rate-6` = rate[7:759],
                `rate+0` = rate[13:765],
                `rate+6` = rate[19:771])
@@ -265,23 +267,10 @@ From these plots, the assumptions of a linear model do not seem to be met, and u
 If we transform our data, maybe we can do a better job.
 
 ```{r}
-lambda = 1
+lambda = 5
 tr <- function(d) {
   log(lambda + d)
 }
-
-# shift1 <- "2008-06-01"
-# shift2 <- "2021-12-01"
-# 
-# rates_2008 <- rates[(which(rates$date == shift1) + 1):which(rates$date == shift2), ]
-# 
-# rates_2020 <- rates[(which(rates$date == shift2) + 1):753, ] %>%
-#   mutate(across(`rate-12`:`rate+6`, tr))
-# 
-# rates_tr <- rates[1:which(rates$date == shift1), ] %>% 
-#   mutate(across(`rate-12`:`rate+6`, tr)) %>%
-#   rbind(rates_2008) %>%
-#   rbind(rates_2020)
 
 rates_tr <- rates %>%
   mutate(across(`rate-12`:`rate+6`, tr))
@@ -295,7 +284,24 @@ qqplot<- ggplot(residuals, aes(sample = residuals)) +
   stat_qq_line()
 cowplot::plot_grid(resplot, qqplot)
 ```
-It seems like this made our data a bit more suited towards a linear model. I don't mind transforming the data in this way because I am not trying to use this model for any interpretations - just making predictions. But how do we choose $\lambda$?
+It seems like this made our data a bit more suited towards a linear model. I don't mind transforming the data in this way because I am not trying to use this model for any interpretations - just making predictions. We will choose a suitable value of lambda with cross validation.
+
+```{r}
+# find the value of lambda which results in the lowest cv score
+# running this a few times it seems lambda of about 5 is good
+lambda = seq(0, 20, by = 0.5)
+cv <- transform_cv(rates, lambda, kfolds = 10)
+lambda.min = lambda[which(cv == min(cv))]
+```
+
+```{r}
+pred = data.frame(date = rates$date, predictions = exp(model$fitted.values) - lambda)
+ggplot() +
+  geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
+  geom_line(data = pred, mapping = aes(x = date, y = predictions), colour = "purple")
+```
+
+We can see that the model does a pretty nice job! The issue is that we cannot predict all that far into the future, (in fact only 6 months).
 
 ## Approach 3 - Predicting interest rates with a SARIMA model
 

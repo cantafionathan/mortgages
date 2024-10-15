@@ -1,3 +1,24 @@
+#' @param data The full data set
+#' @param estimator Function. Has 1 argument (some data) and fits a model. 
+#' @param predictor Function. Has 2 args (the fitted model, the_newdata) and
+#'   produces predictions
+#' @param error_fun Function. Has one arg: the test data, with fits added.
+#' @param kfolds Integer. The number of folds.
+kfold_cv <- function(data, estimator, predictor, error_fun, kfolds = 5) {
+  n <- nrow(data)
+  fold.labels <- sample(rep(1:kfolds, length.out = n))
+  errors <- double(kfolds)
+  for (fold in 1:kfolds) {
+    test.rows <- fold.labels == fold
+    train <- data[!test.rows, ]
+    test <- data[test.rows, ]
+    current_model <- estimator(train)
+    test$.preds <- predictor(current_model, test)
+    errors[fold] <- error_fun(test)
+  }
+  mean(errors)
+}
+
 # log-likelihood in terms of modified bessel function of the first kind
 lnLhelper <- function(param, data, dt) {
   n = length(data)

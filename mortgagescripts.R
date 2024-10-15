@@ -49,7 +49,7 @@ compare <- function(principal=500000, downpayment=0.05, time=25, rates, plot = F
   fixed_amount_owed <- vector(length = months + 2)
   fixed_amount_owed[1] = principal
   fixed_amount_owed[2] = principal - downpayment*principal
-  rate = rates[1]
+  rate = rates[1] # the fixed rate is the initial interest rate
   payment = payment(principal, rate, downpayment, 25)
   for (i in 1:months) {
     fixed_amount_owed[i+2] = fixed_amount_owed[i+1] + fixed_amount_owed[i+1]*rate/12 - payment
@@ -85,4 +85,4 @@ compare <- function(principal=500000, downpayment=0.05, time=25, rates, plot = F
   }
   return(cost)
 }
-compare(rates = cir(param[1], param[2], param[3], 300), plot = T, downpayment =0.05)
+
