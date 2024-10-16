@@ -6,10 +6,7 @@ canadarates <- tail(canadarates, -26)
 dates <- as.Date(canadarates$date, format = "%d %B %Y")
 canadarates$date <- dates
 
-###--------------------------------------------------------------------------###
-###-------------------------------CODE BLOCK 1-------------------------------###
-
-# fits an OLS model that predicts interest rates t months into the future
+# fits an OLS model that predicts interest rates t months into the future and plots the predictions
 #' @param t should be divisible by 6
 OLS_t <- function(t, rate = canadarates$overnight, date = canadarates$date) { #
   #fit the model that predicts t months into future

@@ -123,7 +123,7 @@ This is the data we will use to generate our predictions.
 
 Rather than trying to make predictions about future interest rates from previous rates, what if we had access to the distribution of interest rate trajectories? Then we could check how often in this distribution is, for example, the total cost of a mortgage more than double the principal?
 
-In some sense we are trying to estimate the distribution of a vector in $\mathbb{R}^T$ where $T$ is the number of rates we have observed, and each component is likely highly correlated with each other. And all from a single observation! When I write it down like this it seems fruitless. When I first started this project I didn't have as clear an understanding of what I was doing. In any case here are the results of this first approach.
+In some sense we are trying to estimate the distribution of a vector in $\mathbb{R}^T$ where $T$ is the number of rates we have observed, and each component is likely highly correlated with each other. And all from a single observation! When I write it down like this it seems fruitless... When I first started this project I didn't have as clear an understanding of what I was doing. In any case here are the results of this first approach.
 
 I chose to use a CIR model to avoid negative interest rates. However, due to errors introduced by the discretization, I added a step of taking the absolute value. The function for simulating a CIR model is below.
 
