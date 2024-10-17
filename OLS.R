@@ -36,18 +36,18 @@ OLS_t <- function(t, rate = canadarates$overnight, date = canadarates$date) { #
   }
     # train data
   rates_tr <- rates %>%
-    mutate(across(`rate+t`:`rate-6`, tr))
+    mutate(across(`rate+t`:`rate-6`, log))
     # test data
   rates_test_tr <- rates_test %>%
-    mutate(across(`rate+t`:`rate-6`, tr))
+    mutate(across(`rate+t`:`rate-6`, log))
   
   # fit model
   model <- lm(`rate+t` ~. -date, data = rates_tr)
   
   # plot fitted model + future predictions + actual values
   pred = data.frame(date = rates_test$date, 
-                    predictions = exp(predict(model, rates_test_tr)) - lambda)
-  fit = data.frame(date = rates_tr$date, fits = (exp(model$fitted.values)-lambda))
+                    predictions = exp(predict(model, rates_test_tr)))
+  fit = data.frame(date = rates_tr$date, fits = (exp(model$fitted.values)))
   
   ggplot() +
     geom_point(data = rates, mapping = aes(x = date, y = `rate+0`)) +
