@@ -2,6 +2,8 @@
 title: "Mortgages"
 author: "Nathan Cantafio"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
+bibliography:
+- references.bib
 output: 
   pdf_document: default
   html_document:
@@ -22,10 +24,13 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(reshape2)
 library(tidyverse)
+library(knitr)
+library(patchwork)
 source("functions.R")
 source("mortgagescripts.R")
 source("transformcv.R")
 source("OLS.R")
+source("difference.R")
 ```
 
 # Motivations
@@ -88,7 +93,7 @@ The CIR model is similar but volatility is also proportional to the square root 
 
 The CIR model is nice because at least analytically, as long as $2\alpha\theta > \sigma^2$ (Feller condition) then the rate will never be negative. This is because when $r$ becomes close to zero, the $\sqrt{r}$ term becomes very small and allows the drift term to dominate over the volatility term; pulling $r$ up. However, this does not work out so nicely in simulation due to errors introduced by discretization which can result in negative rates.
 
-We can discretize the CIR model as follows (Euler discretization scheme):
+We can discretize the CIR model as follows (Forward Euler scheme):
 
 \[r[t] = r[t-1] + \alpha(\theta - r[t-1])dt + \sigma\sqrt{r[t-1]}dW.\]
 
@@ -101,7 +106,7 @@ where $a=1-\alpha dt$, $b=\alpha\theta dt$ and $\varepsilon = \sigma dW$ so that
 
 # Predicting (or generating) interest rates
 
-Here is a plot of the average 30 year mortgage rate in the US from 1971 to 2024
+Here is a plot of the average 30 year mortgage rate in the US from 1971 to 2024 (data from [@Mac])
 
 ```{r, echo=TRUE, include=TRUE}
 # load data
@@ -240,11 +245,11 @@ We can use SDEs to model the process.
 I chose to use a CIR model to avoid negative interest rates. However, due to errors introduced by the discretization, I added a step of taking the absolute value. The function for simulating a CIR model is below.
 
 ```{r, echo=TRUE, include=TRUE}
-cir <- function(alpha, theta, sigma, steps) {
+cir <- function(alpha, theta, sigma, steps, start = 0) {
   dt <- 1 # time step
   
   r <- vector(length=steps)
-  r[1] <- theta # initial interest rate
+  r[1] <- start # initial interest rate
   # r[1] <- 5 # could choose any initial rate we want
   
   
@@ -287,7 +292,7 @@ theta = b/(1 - a) # Speed of mean reversion
 sigma <- sqrt(MSE)/sqrt(dt) # Volatility
 ```
 
-There are two ways to calculate the Log-Likelihood for the CIR model both of which are implemented in the file `functions.R` (though I am using the "Bessel" version here).
+There are two ways to calculate the Log-Likelihood for the CIR model outlined by [@Kladivko] both of which are implemented in the file `functions.R` (though I am using the "Bessel" version here).
 
 ```{r, echo=TRUE, include=TRUE, cache=TRUE}
 # Now refine the value of parameters with ML estimation
@@ -310,204 +315,227 @@ steps <- 300 # each step should be thought of as 1 week
 # choose which parameters to use
 param <- MLE
 
-# Create time vector
-time <- 1:steps
-
 # Create data frame to store trajectories
-trajectories <- as.data.frame(c(time))
+trajectories <- tibble(date = rates$date[1:steps], rate = rates$rate[1:steps])
 
 # Choose how many simulated trajectories to generate 
 N <- 5
 
 # Run loop to generate N different simulated trajectories
 for (i in 1:N) {
-  trajectories <- cbind(trajectories, cir(param[1], param[2], param[3], steps))
+  trajectories <- cbind(trajectories, cir(alpha = param[1], 
+                                          theta = param[2], 
+                                          sigma = param[3], 
+                                          steps, start = param[2]))
 }
-colnames(trajectories) <- c('time', paste("trajectory", 1:N, sep = "")) # rename columns
+colnames(trajectories) <- c('date', 'Observed', 
+                            paste("trajectory", 1:N, sep = "")) # rename columns
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length=n+1)
+  hcl(h=hues, l=65, c=100)[1:n]
+}
+
+col <- gg_color_hue(length(paste("trajectory", 1:N, sep = "")))
+names(col) = paste("trajectory", 1:N, sep = "")
+col = c(col, c("Observed" = "black"))
 
 # for plotting purposes in ggplot
-trajectories <- melt(trajectories, id.vars = 'time', variable.name = 'trajectory')
+trajectories <- melt(trajectories, id.vars = 'date', variable.name = 'trajectory')
 
-ggplot(data = trajectories, aes(time, value)) +
+ggplot(data = trajectories, aes(date, value)) +
   geom_line(aes(colour = trajectory)) +
   geom_hline(yintercept = param[2], linetype = "dashed") +
-  xlab("Time") +
+  xlab("Date") +
   ylab("Interest Rate") +
   ggtitle(paste("CIR Interest Rate Monte Carlo Simulation (N=", N, ")", sep = "")) +
-  theme_bw() +
-  theme(legend.position = "none")
+  scale_color_manual(values = col) +
+  theme_bw()
 ```
 
-If the resulting samples do a good job of characterizing the true distribution of the interest rates, then I really like this approach. (This is something worth trying to prove yes or no).
+Now we would like to quantify how well the model characterizes the observed rates. One way to do this is to generate several possible trajectories, and see how far away the average is from the observed rates.
 
-## Approach 3 - Revisiting approach 2 (resampling over shorter periods)
+```{r, echo = FALSE}
+MLEcir <- function(start, steps) {
+  cir(MLE[1], MLE[2], MLE[3], start = start, steps = steps)
+}
 
-# Results of the various approaches
+# predict a default of 10 years into the future from some starting position
+# by taking the average of (default 5) iterations of the CIR model
+predictCIR <- function(start, steps = 520, iter = 5) {
+  res = vector(length = steps)
+  for (i in 1:iter) {
+    res = res + MLEcir(rates$rate[start], steps)
+  }
+  res = res/iter
+  
+  tibble(date = rates$date[start:(start + steps - 1)], prediction = res)
+}
+
+start = 400
+steps = 500
+
+predictions <- predictCIR(start, steps)
+ggplot() +
+  geom_line(data = rates[start:(start + steps - 1),], 
+            mapping = aes(x = date, y = rate, colour = "Observed")) +
+  geom_line(data = predictions, 
+            mapping = aes(x = date, y = prediction, colour = "Predicted")) +
+  labs(x = "Date",
+       y = "Rate",
+       color = "Legend") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red"))+
+  theme_bw()
+```
+
+We can increase the number of CIR trajectories we include in our average to get a prediction with less variance but higher bias. It's fun to play around with different intervals and iteration numbers to see the kind of predictions we get.
+
+In the end, our predictions aren't actually very good by this metric. But it really feels like there's something here. If you generate the plot where multiple trajectories are shown alongside the observed values several times, it seems like maybe we should be able to make statements like "the observed interest rate is bounded from above and below by the $Q_u$, $Q_\ell$ upper and lower quantiles $90\%$ of the time", or something like this.
 
 # Comparing mortgaging and renting
 
-<!-- Rather than simulating the rent prices over time which turned out to be difficult and requires lots more data than I had access to, I will simply check if renting is financially wiser than buying for many different rental rates. For each interest rate trajectory that I simulate, I will see how the cost of renting compares to mortgaging for a range of rental rates. I still needed to determine a base rental rate from which to calculate my range, this was a trickier problem than I thought it would be.  -->
+Let's assume that the interest rate trajectories generated by the preceding method are reasonable. What can we say about the likely cost of a mortgage? And can we compare that in a meaningful way to the cost of renting?
 
-<!-- The method I finally landed on was calculating what a fixed rate 25 year mortgage's monthly payment would be if you wanted to buy the house at the end of every lease term (usually the lease term is 1 year). What this monthly payment would be changes every year because interest rates vary, but don't forget that property values also increase. Which means the principal would be higher in each year. This needs to be accounted for - because rental rates don't vary semi-randomly like interest rates, instead they just increase over time. Two percent seemed like a reasonable annual appreciation value for property, so that's what I went with. -->
+First of all, let's generate $10,000$ interest rate trajectories. Our data was weekly, but it's easier to compute costs from monthly data, so we need to agregate the data. We can compute the total cost of a 25 year mortgage (on a $\$50000$ property) on each trajectory and look at the resulting histogram.
 
-<!-- Lets go through a quick example. Let's say a house is bought in 1990 for \$500,000. To calculate what the base rent should be for this property, we use the interest rate in 1990 and the principal of \$500,000 to calculate what the monthly payment is on a fixed rate 25 year mortgage. If rent is any higher than this, then it's obvious that we might as well just buy. Then to find the range of potential rent values, we use ratios between say half and the full base rent For example we could increment by 0.1, then we would be checking rents of 0.5 the base rent, 0.6 the base rent, 0.7 the base rent, ..., the whole base rent. But don't forget we need to update the base rent every lease term (usually 1 year), and then re-calculate the range of rents. So in 1991, the property is expected to increase to \$510000 which we use as our new principal to calculate the new base rent.  -->
+```{r, cache = TRUE, echo = FALSE}
+set.seed(2024)
+# Simulate the rates
+# Set number of simulation steps
+years = 25
+steps <- years*52.25 # each step should be thought of as 1 week so this is 25 years
 
-<!-- In the end we will have a range of rents for each of the 25 years. And this is only for 1 interest rate trajectory! But with this information we can compare the cost of mortgaging to the cost of rent for this particular interest rate trajectory. If we do this for several simulated trajectories, we can see how often and by how much is mortgaging or renting better than the other financially. -->
+# choose which parameters to use
+param <- MLE
 
-<!-- ```{r, include=TRUE, echo=TRUE} -->
-<!-- # principal = initial value of property -->
-<!-- # time = number of years for mortgage -->
-<!-- # rates = interest rate over time -->
-<!-- # investment_appreciation = annual appreciation of investment (i.e. stocks/bonds) -->
-<!-- # property_appreciation = annual appreciation of property value -->
-<!-- # lease_term = length of the lease term (i.e. how often should price of rent be updated) -->
-<!-- # step = step between ratios we test -->
-<!-- #  -->
-<!-- difference <- function(principal = 500000, time = 25, rates, investment_appreciation = 0.06,  -->
-<!--                        property_appreciation = 0.02, lease_term = 12, step=0.1, max_ratio=1.2,  -->
-<!--                        min_ratio=0.5) { -->
+# Create data frame to store trajectories
+trajectories <- tibble(date = rates$date[1:steps])
 
-<!--   n = time*12 # number of months -->
-<!--   r = 1 + investment_appreciation/12 # monthly appreciation of investment -->
-<!--   s = 1 + property_appreciation/12 # monthly appreciation of real estate -->
+# Choose how many simulated trajectories to generate 
+N <- 10000
 
-<!--   # calculate the mortgage payments over time -->
-<!--   var_payment = variable_payment(principal = principal, rates = rates, time=time) -->
-<!--   # total cost of mortgage = sum of all the payments -->
-<!--   mortgage_cost = sum(var_payment)  -->
+# Run loop to generate N different simulated trajectories
+for (i in 1:N) {
+  trajectories <- cbind(trajectories, cir(alpha = param[1], 
+                                          theta = param[2], 
+                                          sigma = param[3], 
+                                          steps, start = param[2]))
+}
+colnames(trajectories) <- c('date', paste("trajectory", 1:N, sep = "")) # rename columns
+trajectories$Month <- format(trajectories$date,format="%m")
+trajectories$Year <- format(trajectories$date,format="%Y")
+trajectories <- aggregate(. ~ Month + Year, trajectories, mean)
+trajectories$date <- as.Date(paste(trajectories$Year, "-", trajectories$Month, "-01", sep =""))
+trajectories <- trajectories[,-(1:2)]
+trajectories <- trajectories[(1:(years*12)),]
+```
 
-<!--   # get adjusted value of home over 25 years based on 2% appreciation per year -->
-<!--   principal = rep(principal, n) -->
-<!--   for (i in 1:n) { -->
-<!--     principal[i] = principal[i]*s^(i-1)  -->
-<!--   } -->
+```{r, echo = FALSE}
+cost <- vector(length = N)
+for (i in 2:(N+1)) {
+  cost[i-1] <- sum(variable_payment(rates = trajectories[,i]))
+}
+cost <- tibble(cost = cost)
 
-<!--   # calculate the baseline rent for every lease term -->
-<!--   # by finding what the fixed rate mortgage would be -->
-<!--   # for adjusted property value -->
-<!--   baseline_rent = payment(principal = principal, rate = rates, time = time)  -->
-<!--   baseline_rent = baseline_rent[c(TRUE,rep(FALSE,lease_term - 1))]            -->
-<!--   rep_baseline <- c()                                                        -->
-<!--   for(w in 1:length(baseline_rent)) { -->
-<!--     rep_baseline <- rbind(rep_baseline, rep(baseline_rent[w], lease_term)) -->
-<!--   } -->
+ggplot(data = cost, aes(x = cost)) +
+  geom_histogram(binwidth = 3000) +
+  geom_vline(aes(xintercept=mean(cost)),
+            color="red", linetype="dashed", linewidth=1) +
+    geom_vline(aes(xintercept=median(cost)),
+            color="green", linetype="dashed", linewidth=1) +
+    geom_vline(aes(xintercept=quantile(cost, 0.01)),
+            color="blue", linetype="dashed", linewidth=1) +
+      geom_vline(aes(xintercept=quantile(cost, 0.99)),
+            color="blue", linetype="dashed", linewidth=1) +
+  theme_bw()
+quantile(cost$cost, c(0.01, 0.5, 0.99))
+```
+The blue lines are the $0.01$ and $0.99$ quantiles, the green line is the median, and the red line is the mean.
 
+If we consider the "true" value of a home to be the principal value it was sold for; then we see that even in the best case a mortgager will still overpay by over $50\%$. On average they will overpay by over double.
 
-<!--   m = (max_ratio - min_ratio)/step + 1 # m = number of different rents we test -->
-<!--   result = vector(length = m) -->
+When I first saw this I was floored. Maybe I'm just a bit naive but that is an absurd amount of money that goes towards interest. But we have to live somewhere, so how does this compare to renting? This is actually not a trivial comparison to make. We'll have to make some assumptions.
 
-<!--   for (j in 1:m) { -->
-<!--     rental_payment = rep_baseline*(min_ratio+step*(j-1)) # calculate monthly rent for each month -->
+\begin{enumerate}
+\item Rental prices are proportional to the value of the property at the start of the lease term
+\item Property value appreciates at a rate of $\alpha=0.02$
+\item Stocks/other holdings appreciate at a rate of $\beta=0.05$
+\end{enumerate}
 
-<!--     # calculate how much money is made by investing what we would have payed towards the mortgage -->
-<!--     investment_income = 0  -->
-<!--     for (k in 1:n) { -->
-<!--       investment_income = investment_income*r + var_payment[k] - rental_payment[k] -->
-<!--     } -->
+With these assumptions we can calculate the cost of renting a property from the mortgage cost. Let's go through an example. A house is bought in $1990$ for $\$500,000$. What should the rent be set at? We use the interest rate in $1990$ (say $0.03$) and the property value to compute the monthly payment on a fixed rate $25$ year mortgage. The rent should be set to some percentage of this monthly payment (maybe $0.6$?). Then in $1991$, the property value appreciates by $2\%$ so the new value is $\$51000$. We look at the interest rate in the $1991$ and compute the monthly payment on a fixed rate mortgage. Then the rent for the year of $1991$ will be some proportion of that monthly payment. It's not clear what proportion of the mortgage cost should rent be set to, so we can check a range of possibilities. 
 
-<!--     # calculate the cost of the rental by taking sum of rent payments -->
-<!--     # and subtracting profits from investment -->
-<!--     rental_cost = sum(rental_payment) - investment_income   -->
+There is another assumption. Any money that our hypothetical renter saved on the monthly cost of rent compared to the monthly cost of the mortgage is being invested in the market in stocks/other holdings. This is most likely not true for the average renter.
 
-<!--     result[j] = mortgage_cost - rental_cost -->
-<!--   } -->
-<!--   return(result) -->
-<!-- } -->
-<!-- ``` -->
+Below are two plots and a table. The first plot shows the proportion of rates where renting came out on top for each monthly rent as a ratio of monthly mortgage payment. Unsurprisingly, as the cost of rent approaches the cost of a mortgage, it becomes better to mortgage in more cases. The second plot shows the average difference between the cost of renting and the cost of mortgaging. The table is a concise summary of both plots.
 
-<!-- Compare rentals to mortgages. -->
+```{r, cache=TRUE, echo = FALSE}
+alpha = 0.02
+beta = 0.05
 
-<!-- ```{r, include=TRUE, echo=TRUE, cache=TRUE} -->
+step = 0.05
+max_ratio = 1
+min_ratio = 0.6
 
-<!-- # Simulate the rates -->
-<!-- # Set number of simulation steps -->
-<!-- steps <- 300 -->
+results <- difference(rates = trajectories[,2], 
+                      step = step,
+                      alpha = alpha,
+                      beta = beta,
+                      max_ratio = max_ratio, 
+                      min_ratio = min_ratio)
+for (i in 2:N) {
+  results[nrow(results) + 1, ] = difference(rates = trajectories[,i+1], 
+                                            step = step,
+                                            alpha = alpha,
+                                            beta = beta,
+                                            max_ratio = max_ratio, 
+                                            min_ratio = min_ratio)
+}
+```
+```{r, echo=FALSE}
+rent_ratios <- seq(min_ratio, max_ratio, step)
+count_mat <- results > 0
+count_mat[,1] <- as.numeric(count_mat[,1])
+count <- colSums(count_mat)
+df = data.frame(ratio = rent_ratios, proportion = count/N, mean = colMeans(results))
+row.names(df) <- NULL
 
-<!-- # choose which parameters to use -->
-<!-- param <- MLE -->
+prop_plot <- ggplot(data = df) +
+  geom_bar(stat = "identity",
+           mapping = aes(x = ratio, y = proportion)) +
+  labs(title = "Proportion of trajectories where renting was cheaper than mortgaging",
+       x = "Rent payment as a ratio of monthly mortgage payment", y = "Proportion") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
 
-<!-- # Create time vector -->
-<!-- time <- 1:steps -->
+mean_plot <- ggplot(data = df) +
+  geom_bar(stat = "identity",
+           mapping = aes(x = ratio, y = mean), alpha = 0) +
+  geom_point(mapping = aes(x = ratio, y = mean), colour = "steelblue") +
+  geom_line(mapping = aes(x = ratio, y = mean), colour = "steelblue") +
+  labs(title = "Average cost of mortgage minus cost of renting",
+       x = "Rent payment as a ratio of monthly mortgage payment",
+       y = "Cost") +
+  theme_bw()
 
-<!-- # Create data frame to store trajectories -->
-<!-- trajectories <- as.data.frame(c(time)) -->
+prop_plot / mean_plot
+kable(df)
+```
+<!-- It would be nice to get some confidence bars on this, maybe use bootstrap to get an estimate of the variance? -->
 
-<!-- # Choose how many simulated trajectories to generate  -->
-<!-- N <- 1000 -->
+What this graph is really showing is that the trade-off between renting and buying comes down to whether or not we think housing will appreciate in value more than other holdings. NOT because owning the house is good for the home owner, but because not owning is bad for the renter. Even if you own your home and the price sky rockets, if you wanted to sell to take advantage you would then just end up buying a house in the inflated market. In my opinion what buying really does is lock in a price at the current market rate. Someone who rents is constantly paying proportional to the current price of housing, while the mortgager pays monthly mortgage payments proportional to the market rates at the time of when they bought. However, if other holdings grow faster than housing the renter can still come out on top by investing what they would have put towards their mortgage into those other holdings.
 
-<!-- # Run loop to generate N different simulated trajectories -->
+<!-- Calculate the exact relationship between property appreciation and appreciation of other holdings? -->
 
-<!-- for (i in 1:N) { -->
-<!--   trajectories <- cbind(trajectories, cir(param[1], param[2], param[3], steps)) -->
-<!-- } -->
-<!-- colnames(trajectories) <- c('time', paste("traj", 1:N, sep = "")) # rename columns -->
-<!-- trajectories$time <- NULL -->
-
-<!-- step = 0.05 -->
-<!-- max_ratio = 0.9 -->
-<!-- min_ratio = 0.6 -->
-
-<!-- results <- data.frame(as.list(difference(principal=500000, rates = trajectories[,1], step = step,  -->
-<!--                                          max_ratio = max_ratio, min_ratio = min_ratio))) -->
-<!-- for (i in 2:N) { -->
-<!--   results[nrow(results) + 1, ] = difference(principal=500000, rates = trajectories[,i], step = step,  -->
-<!--                                             max_ratio = max_ratio, min_ratio = min_ratio) -->
-<!-- } -->
-<!-- ``` -->
-
-<!-- Below is a plot showing the percentage of trajectories that favor rentals, and a plot showing the average difference in cost between renting and mortgaging. From this data, it looks like it makes the most sense to rent when the monthly rent is $0.6-0.7$ times what the monthly payment would be on a fixed rate mortgage. In this case you have a greater than $85\%$ chance of being better off renting. If the monthly rent is $0.7-0.8$ times the monthly payment, then it's hard to say which will be better financially. And for monthly rent $>0.8$ times the monthly payment it is better financially to buy. This assume that property appreciates at about $2\%$ per year. If that isn't the case for you, you can tweak the code and re-run to see how the results change. The more property appreciates, the worse it is for renters. -->
-
-<!-- ```{r, include=TRUE, echo=TRUE} -->
-<!-- rent_ratios <- seq(min_ratio, max_ratio, step) -->
-<!-- colnames(results) <- rent_ratios -->
-
-<!-- count_mat <- results > 0 -->
-<!-- count_mat[,1] <- as.numeric(count_mat[,1]) -->
-<!-- count <- colSums(count_mat) -->
-<!-- barplot(count/N, main='Mortgaging minus Renting',  -->
-<!--         ylab = '% trajectories where cost mortgaging > cost renting',  -->
-<!--         xlab = 'Rent Payment as a ratio of Monthly Payment', ylim=c(0,1)) -->
-<!-- count/N -->
-
-<!-- means <- colMeans(results) -->
-<!-- barplot(means, main="Mortgaging minus Renting", ylab="Average Cost Difference",  -->
-<!--         xlab="Rent Payment as a ratio of Monthly Payment") -->
-<!-- means -->
-<!-- ``` -->
-
-<!-- From the bottom graph we can see that if rent is 0.65 times the monthly payment, the renter will have on average about $\$460000$ more than the mortgager at the end of twenty-five years. But this comparison ends at twenty-five years, after the mortgage is payed off the mortgager doesn't have any more monthly payments and could put much more money into an investment every year. But with a such a head start and due to the way interest compounds, the renter will still come out on top as you can see from the approximation of the situation below (this is only an approximation since the monthly injection doesn't change over time). -->
-
-<!-- ```{r, include=TRUE, echo=TRUE} -->
-<!-- investment <- function(start = 0, injection, r = 1+0.06/12, n = 300) { -->
-<!--   res = start -->
-<!--   for(i in 1:n) { -->
-<!--     res = res*r + injection -->
-<!--   } -->
-<!--   return(res) -->
-<!-- } -->
-
-<!-- investment(start = 460000, injection = 650) # renter -->
-<!-- investment(injection = 1000) # mortgager -->
-<!-- ``` -->
-
-<!-- These number are derived for comparing the same property, which isn't realistic since you won't have the option to buy/rent the same property in the real world. However, you can use the rule above to compare two different properties as long as you're happy with either property. -->
-
-<!-- You could use this data/method to answer lots of questions about rental pricing. For example, if you own a condo that you want to rent out you might want to know what you need to price your rental at so that you have a $>95\%$ chance to cover at least half of your monthly payment. -->
-
-<!-- One thing that I didn't consider in my comparison was the appreciation of property value being added to the mortgager's net gains. I chose to ignore this because that money isn't actually accessible until you sell at which point you need to buy a new property which then ties up all or most of that money again. -->
+<!-- Can I write down a heuristic for when one should buy/rent based on say the ratio of yearly cost of rent to principal value or something like that? -->
 
 # Conclusions
 
-<!-- This was an interesting project that taught me a lot. For one thing it made me realize that the forces that control the monthly payment on a mortgage are separate from the forces that control rental prices. The interest rates and initial property value (the principal) will inform a mortgage's monthly payment. Whereas the current property value informs the rental payment. So what this comes down to is, are you able to put enough towards an investment that appreciates faster than the property value in order to offset the loss of your rental payment? I also learned a little bit about stochastic differential equations to simulate interest rates.  -->
+There are several issues with this project. First of all I feel that the CIR model is better suited to predicting over shorter intervals than the $25$ years that I asked of it. Secondly, I am forced to make assumptions about the way that rentals are priced, and those assumptions shaped my results. Had I chosen different parameter $\alpha$ and $\beta$ (appreciation of property and other holdings), I would have gotten different results.
 
-<!-- I would also like to mention that this comparison is purely financial and assumes only one property. My guess is that if you are able to get your hands on multiple properties, that it then becomes better financially (but perhaps worse morally) to mortgage. This also doesn't consider the psychological security you could get from knowing that you own your home and not having to deal with the potential headache of a bad landlord/needing to move.  -->
+However, I still think this project was worth doing. It allowed me to practice manipulating data, and it was fun learning about and implementing stochastic volatility models. I would also say that even though the conclusions should be taken with a grain of salt, I do think they hold some value. 
 
-<!-- Another assumption of this comparison is that the renter invests all of the excess money they would have put towards their monthly payment towards investments. For most renters this isn't the case. I have heard people say that renting can be just as good as buying, and from this analysis it actually seems like that is sometimes the case. But that's only true where the potential buyer has the financial capabilities to choose between buying and renting. Simply put, mortgaging is more expensive month-to-month than renting. If you have the baseline income to even consider buying a home, then you are already better off than most people who "choose" to rent. A renter would have to put between $40\%$ to $70\%$ ($0.3/0.7$ to $0.4/0.6$) of their monthly rent towards investments in order to out-earn the appreciation of the property they are living in (and they still need to actually pay the rent, so for renting to be better than mortgaging you can multiply the rent by a factor of about $1.5$ to get monthly cost of living). For most people, who don't have the excess money to invest, this analysis does not apply. What I am trying to get at is that just because renting can be financially better than mortgaging - **if you cannot afford to mortgage in the first place then you are still screwed**. -->
-
-<!-- A massive advantage of mortgaging if you have kids is that it gives you something to pass down. A mortgage essentially turns let's say approximately $\$1$ million of your dollars into $\$5-\$10$ million of your kid's dollars. And you don't even need all $\$1$ million at once, you can start with as little as $\$25000$ as a downpayment. Essentially, mortgaging gives you access to money (and thus wealth appreciation) that you otherwise wouldn't have had access to. This is an amazing way to improve your child's life over yours, in fact it's probably the best way since they essentially won't need to buy or rent for their home. -->
-
-<!-- The other thing to keep in mind is the location of most rentals which are dense cities. If you don't need to own a car for your day-to-day activities that is also a place where financial savings are made. Whereas if you live in the suburbs, a car is necessity for every day which adds to the cost of living. This isn't necessarily a win for renting as much as it is for dense cities, but it is something to consider. -->
-
-<!-- My final thoughts are that if you don't pay off your mortgage and then live in that property for a while, you definitely should have rented instead. If you don't want kids, consider renting instead. If you need to move cities often for work, consider renting instead (this is probably obvious). If you want kids, then consider mortgaging for their financial future (potentially at the expense of yours). Essentially, renting can be better for the generational short term if your goal is to maximize your wealth over your life time. Mortgaging is better over the generational long term and sets your kids up for success. This goes out the window if you own multiple properties and charge rent to tenants, which I would bet makes mortgaging better.  -->
-
-<!-- Overall, this project does not aim to say "renting is better than mortgaging" or that "mortgaging is better than renting". Initially my goal was just to get a better understanding of both. Now I have a rule of thumb to make an informed decision about whether a given rental is fairly priced or whether I should just consider buying. But let's be honest, I will be renting for a while. -->
+# Bibliography
