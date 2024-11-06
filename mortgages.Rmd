@@ -524,7 +524,7 @@ mean_plot <- ggplot(data = df) +
 prop_plot / mean_plot
 kable(df)
 ```
-<!-- It would be nice to get some confidence bars on this, maybe use bootstrap to get an estimate of the variance? -->
+<!-- It would be nice to get some confidence bars on this, maybe use bootstrap to get an estimate of the variance?/pivotal interval -->
 
 What this graph is really showing is that the trade-off between renting and buying comes down to whether or not we think housing will appreciate in value more than other holdings. NOT because owning the house is good for the home owner, but because not owning is bad for the renter. Even if you own your home and the price sky rockets, if you wanted to sell to take advantage you would then just end up buying a house in the inflated market. In my opinion what buying really does is lock in a price at the current market rate. Someone who rents is constantly paying proportional to the current price of housing, while the mortgager pays monthly mortgage payments proportional to the market rates at the time of when they bought. However, if other holdings grow faster than housing the renter can still come out on top by investing what they would have put towards their mortgage into those other holdings.
 

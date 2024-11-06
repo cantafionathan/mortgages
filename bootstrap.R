@@ -1,8 +1,38 @@
-B = 10000
+source("difference.r")
+library(tibble)
+B = 2
+
+# load data
+usrates <- read.csv(file = "MORTGAGE30US.csv")
+colnames(usrates) <- c("date", "rate")
+usrates$date <- base::as.Date(usrates$date, format = "%Y-%m-%d")
+r = usrates$rate/100
+rates <- data.frame(date = usrates$date, rate = r)
+
+# cir function
+cir <- function(alpha, theta, sigma, steps, start = 0) {
+  dt <- 1 # time step
+  
+  r <- vector(length=steps)
+  r[1] <- start # initial interest rate
+  # r[1] <- 5 # could choose any initial rate we want
+  
+  
+  for (i in 2:steps) {
+    dW <- rnorm(1, mean=0, sd=1) # generate random noise
+    
+    r[i] <- abs(r[i-1] + alpha*(theta - r[i-1])*dt +      # modified euler
+                  sigma*sqrt(r[i-1])*dt*dW) 
+  }
+  
+  return(r)
+}
 
 step = 0.05
 max_ratio = 1
 min_ratio = 0.6
+beta = 0.05
+alpha = 0.02
 
 ratios <- seq(min_ratio, max_ratio, step)
 boot_mean = matrix(nrow = B, ncol = length(ratios))
@@ -17,7 +47,7 @@ for (b in 1:B) {
   steps <- years*52.25 # each step should be thought of as 1 week so this is 25 years
   
   # choose which parameters to use
-  param <- MLE
+  param <- c(0.0006201719, 0.0720520244, 0.0039161539)
   
   # Create data frame to store trajectories
   trajectories <- tibble(date = rates$date[1:steps])
