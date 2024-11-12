@@ -1,4 +1,6 @@
 # Mortgages and Rentals
+PDF report contained in mortgages.pdf 
+Code is contained in mortgages.Rmd and other scripts
 
 ## Data Sources:
 # Canadian overnight rate

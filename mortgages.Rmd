@@ -438,7 +438,7 @@ for (i in 2:(N+1)) {
 cost <- tibble(cost = cost)
 
 ggplot(data = cost, aes(x = cost)) +
-  geom_histogram(binwidth = 3000) +
+  geom_histogram(binwidth = 20000) +
   geom_vline(aes(xintercept=mean(cost)),
             color="red", linetype="dashed", linewidth=1) +
     geom_vline(aes(xintercept=median(cost)),
